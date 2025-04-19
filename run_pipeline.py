@@ -9,6 +9,7 @@ import shutil
 import argparse
 import subprocess
 import time
+import datetime
 
 # --- Configuration ---
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -18,14 +19,67 @@ PROCESSED_DATA_DIR = os.path.join(DATA_DIR, 'processed')
 OUTPUT_DATA_DIR = os.path.join(DATA_DIR, 'output')
 FUNCTIONS_DIR = os.path.join(PROJECT_ROOT, 'functions')
 SCRIPTS_DIR = os.path.join(PROJECT_ROOT, 'scripts')
+LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
 
 # Python interpreter from virtual environment
 PYTHON_EXECUTABLE = os.path.join(PROJECT_ROOT, '.venv', 'Scripts', 'python.exe')
 
+# --- Logging Setup ---
+class TeeLogger:
+    """Custom logger that writes to both console and log file."""
+    
+    def __init__(self, log_file):
+        self.terminal = sys.stdout
+        self.log_file = log_file
+        
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()  # Ensure log is written immediately
+        
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+def setup_logging():
+    """Set up logging to both console and file."""
+    # Create logs directory if it doesn't exist
+    if not os.path.exists(LOGS_DIR):
+        os.makedirs(LOGS_DIR)
+    
+    # Create timestamped log filename
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = os.path.join(LOGS_DIR, f"pipeline_run_{timestamp}.log")
+    
+    # Open log file and redirect stdout/stderr
+    log_file = open(log_filename, 'w', encoding='utf-8')
+    sys.stdout = TeeLogger(log_file)
+    
+    print(f"=== EDID Forge Mini Pipeline Run - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+    print(f"Log file: {log_filename}")
+    
+    return log_file
+
+def cleanup_logging(log_file):
+    """Clean up logging resources."""
+    sys.stdout = sys.__stdout__  # Restore original stdout
+    if log_file:
+        log_file.close()
+
 # --- Helper Functions ---
 def ensure_directories():
-    """Ensure all required directories exist."""
-    for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUT_DATA_DIR, FUNCTIONS_DIR]:
+    """
+    Ensure all required directories exist for the pipeline.
+    
+    This function creates the following directory structure if it doesn't exist:
+    - data/
+      - raw/       : For raw extracted data from PDFs and hex files
+      - processed/ : For intermediate processed data
+      - output/    : For final output files
+    - functions/   : For generated parsing functions
+    - logs/        : For pipeline run logs
+    """
+    for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUT_DATA_DIR, FUNCTIONS_DIR, LOGS_DIR]:
         if not os.path.exists(directory):
             os.makedirs(directory)
             print(f"Created directory: {directory}")
@@ -76,14 +130,24 @@ def run_command(args, description, cwd=None):
 
 def run_pipeline():
     """Run the complete pipeline from start to finish."""
-    ensure_directories()
-    
     # Copy example hex file to raw data directory if needed
     example_file = os.path.join(PROJECT_ROOT, 'example', '0839EBB5CAB9')
     example_hex_dest = os.path.join(RAW_DATA_DIR, 'example_hex.txt')
     if not os.path.exists(example_hex_dest) and os.path.exists(example_file):
         shutil.copy2(example_file, example_hex_dest)
         print(f"Copied example hex file to: {example_hex_dest}")
+    
+    # Log the input hex data if available
+    if os.path.exists(example_file):
+        print("\n" + "="*80)
+        print("INPUT HEX DATA")
+        print("="*80)
+        try:
+            with open(example_file, 'r') as f:
+                hex_data = f.read()
+                print(hex_data)
+        except Exception as e:
+            print(f"Error reading hex data: {e}")
     
     # Step 1: Extract text from PDF
     if not run_command([PYTHON_EXECUTABLE, 'extract_pdf.py'], 
@@ -130,7 +194,22 @@ def run_pipeline():
     print("\n" + "="*80)
     print("Pipeline completed successfully!")
     print("="*80)
-    print(f"\nParsed EDID data saved to: {os.path.join(OUTPUT_DATA_DIR, 'parsed_edid.json')}")
+    
+    output_json_path = os.path.join(OUTPUT_DATA_DIR, 'parsed_edid.json')
+    print(f"\nParsed EDID data saved to: {output_json_path}")
+    
+    # Log the output JSON if available
+    if os.path.exists(output_json_path):
+        print("\n" + "="*80)
+        print("OUTPUT JSON")
+        print("="*80)
+        try:
+            with open(output_json_path, 'r') as f:
+                json_data = f.read()
+                print(json_data)
+        except Exception as e:
+            print(f"Error reading output JSON: {e}")
+    
     return True
 
 def main():
@@ -140,13 +219,23 @@ def main():
                         help='Clean all generated artifacts before running the pipeline')
     args = parser.parse_args()
     
-    if args.clean:
-        clean_artifacts()
+    # Set up logging
+    log_file = setup_logging()
     
-    success = run_pipeline()
-    if not success:
-        print("\nPipeline execution failed. See error messages above.")
-        sys.exit(1)
+    try:
+        # Always ensure directories exist first
+        ensure_directories()
+        
+        if args.clean:
+            clean_artifacts()
+        
+        success = run_pipeline()
+        if not success:
+            print("\nPipeline execution failed. See error messages above.")
+            sys.exit(1)
+    finally:
+        # Clean up logging resources
+        cleanup_logging(log_file)
 
 if __name__ == "__main__":
     main()

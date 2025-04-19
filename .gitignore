@@ -20,13 +20,9 @@ build/
 data/raw/*
 data/processed/*
 data/output/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/output/.gitkeep
 
 # Generated functions
 functions/*
-!functions/.gitkeep
 
 # Environment variables
 .env
@@ -39,8 +35,8 @@ functions/*
 .DS_Store
 
 # Logs
-*.log
-logs/
+logs/*
+!logs/
 
 # Jupyter Notebook
 .ipynb_checkpoints
