@@ -1,14 +1,15 @@
 import json
-import os
+import os  # Needed for os.getenv
 import re
 from openai import OpenAI, RateLimitError, APIError
 from dotenv import load_dotenv
 import time
+from pathlib import Path
 
 # --- Configuration ---
-FIELD_MAPPING_FILE = os.path.join('..', 'data', 'processed', 'field_mapping.json')
-SPEC_CHUNKS_FILE = os.path.join('..', 'data', 'raw', 'spec_chunks.json') # Needed to get full text
-OUTPUT_DIR = os.path.join('..', 'functions')
+FIELD_MAPPING_FILE = Path('..') / 'data' / 'processed' / 'field_mapping.json'
+SPEC_CHUNKS_FILE = Path('..') / 'data' / 'raw' / 'spec_chunks.json' # Needed to get full text
+OUTPUT_DIR = Path('..') / 'functions'
 CHAT_MODEL = 'gpt-4o-mini'
 MAX_CONTEXT_TOKENS = 4000 # Max tokens for LLM context
 # ---------------------
@@ -21,189 +22,199 @@ def load_api_key():
         raise ValueError("OPENAI_API_KEY not found in .env file or environment variables.")
     return api_key
 
-def load_json_file(filepath, description):
-    """Loads data from a JSON file with error handling."""
+def load_json_file(file_path, description):
+    """Load JSON data from file."""
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {description} file '{filepath}' not found.")
-        return None
-    except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from '{filepath}'.")
-        return None
-
-# Helper function to limit context size (simple token approximation)
-def limit_context(text, max_tokens):
-    tokens = text.split() # Very rough approximation
-    if len(tokens) > max_tokens:
-        print(f"    Context truncated from ~{len(tokens)} to ~{max_tokens} tokens.")
-        return " ".join(tokens[:max_tokens]) + "..."
-    return text
-
-def generate_parsing_function(client, field_info, spec_context, chat_model):
-    """Uses LLM to generate a Python parsing function for a specific field."""
-    field_name = field_info.get('field', 'UnknownField')
-    field_offset = field_info.get('offset', 'UnknownOffset')
-
-    # Sanitize field name for function name
-    func_name = 'parse_' + re.sub(r'\W|^(?=\d)', '_', field_name.lower()).strip('_')
-
-    system_prompt = f"""
-You are an expert Python programmer specializing in binary data parsing according to technical specifications.
-Your task is to write a single, deterministic Python function to parse a specific field from a byte slice based ONLY on the provided specification excerpts.
-
-Function Requirements:
-- Name the function `{func_name}`.
-- It should accept a single argument: `byte_slice` (a bytes object containing exactly the bytes for this field, e.g., if offset is 0x08-0x09, byte_slice will have length 2).
-- It must return the parsed value in its appropriate Python type (e.g., int, string, float, dictionary).
-- Use ONLY deterministic logic derived *strictly* from the provided specification text.
-- Do NOT include any external libraries unless absolutely necessary and justified by the spec (e.g., math). Standard library is OK.
-- Do NOT add example usage, comments explaining the LLM prompt, or any surrounding text.
-- Output ONLY the complete Python function code, including the `def` line and necessary imports *if* needed within the function scope or standard library imports at the top.
-- If the provided context is insufficient to write a reliable parsing function, return only the text "# Insufficient context to generate parser."
-"""
-
-    user_prompt = f"""
-Field Name: {field_name}
-Byte Offset(s): {field_offset}
-
-Relevant Specification Excerpts:
----
-{spec_context}
----
-
-Generate the Python function `{func_name}(byte_slice)` as described above.
-"""
-
-    print(f"  -> Sending request to {chat_model} for function {func_name}...", end='', flush=True)
-    try:
-        # Add retry logic for API errors
-        for attempt in range(3):
-            try:
-                response = client.chat.completions.create(
-                    model=chat_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.0, # Zero temperature for deterministic code
-                )
-                response_content = response.choices[0].message.content
-                print(" Done.")
-                return response_content, func_name
-
-            except (RateLimitError, APIError) as e:
-                print(f" API Error ({type(e).__name__}), retrying in {2**(attempt+1)}s...", end='', flush=True)
-                if attempt < 2:
-                    time.sleep(2**(attempt+1))
-                else:
-                    print(" Failed after multiple retries.")
-                    return f"# Failed to generate due to API error: {e}", func_name
-
-            except Exception as e:
-                 print(f" Unexpected Error: {e}.", end='', flush=True)
-                 # Non-API errors are less likely to resolve on retry, break
-                 return f"# Failed to generate due to unexpected error: {e}", func_name
-
-        # Should not be reached if retries fail properly
-        return "# Generation failed after retries.", func_name
-
     except Exception as e:
-        print(f" Unexpected error during LLM call setup: {e}")
-        return f"# Failed to generate due to setup error: {e}", func_name
+        print(f"Error loading {description}: {e}")
+        return None
 
-def extract_python_code(raw_response):
-    """Extracts Python code block from LLM response."""
-    if raw_response.strip().startswith("#"): # Handle error/insufficient context messages
-        return raw_response
+def sanitize_function_name(field_name):
+    """Convert field name to a valid Python function name."""
+    # Replace special characters with underscores
+    func_name = re.sub(r'[^a-zA-Z0-9_]', '_', field_name.lower())
+    # Ensure it starts with a letter
+    if not func_name[0].isalpha():
+        func_name = 'f_' + func_name
+    return func_name
 
-    # Find ```python ... ``` block or assume the whole response is code
-    match = re.search(r"```python\n(.*?)```", raw_response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    else:
-        # If no markdown block found, assume the whole response is code, strip leading/trailing whitespace
-        return raw_response.strip()
+def generate_parsing_function(field_name, field_offset, spec_context):
+    """Generate a parsing function for a field using OpenAI API."""
+    # Create a valid function name
+    func_name = f"parse_{field_name.lower().replace(' ', '_').replace('&', '').replace(',', '').replace('(', '').replace(')', '').replace('-', '_')}"
+    
+    # Create the prompt for the OpenAI API
+    user_prompt = f"""
+    Field Name: {field_name}
+    Byte Offset(s): {field_offset}
+    Relevant Specification Excerpts:
+    ---
+    {spec_context}
+    ---
+    Generate the Python function `{func_name}(byte_slice)` as described above.
+    """
+    
+    # Create the system prompt
+    system_prompt = """You are an expert in EDID (Extended Display Identification Data) specification and Python programming. 
+    Your task is to generate a Python function that parses a specific field from an EDID binary data slice.
+    
+    Follow these requirements:
+    1. The function should accept a single parameter: `byte_slice` (a bytes object containing the relevant bytes for this field)
+    2. The function should return the parsed value in an appropriate Python data type
+    3. Include detailed comments explaining the parsing logic
+    4. Handle potential errors gracefully (e.g., check if byte_slice has the expected length)
+    5. Return only the function code, no additional explanations
+    
+    For example, if asked to parse a header field that should contain the bytes [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00], your response might be:
+    
+    ```python
+    def parse_header(byte_slice):
+        \"\"\"
+        Parse the EDID header, which should be the fixed pattern: 00 FF FF FF FF FF FF 00
+        
+        Args:
+            byte_slice (bytes): The 8-byte header
+            
+        Returns:
+            bool: True if the header is valid, False otherwise
+        \"\"\"
+        # Check if we have the correct number of bytes
+        if len(byte_slice) != 8:
+            return f"ERROR: byte_slice must be exactly 8 bytes long"
+            
+        # Check if the header matches the expected pattern
+        expected_header = bytes([0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00])
+        return byte_slice == expected_header
+    ```
+    """
+    
+    # Initialize OpenAI client
+    client = OpenAI(api_key=load_api_key())
+    
+    # Maximum number of retries
+    max_retries = 3
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Call the OpenAI API
+            print(f"  -> Sending request to {CHAT_MODEL} for function {func_name}... ", end="", flush=True)
+            response = client.chat.completions.create(
+                model=CHAT_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.2,  # Low temperature for more deterministic output
+                max_tokens=1000,  # Limit response length
+                top_p=0.95
+            )
+            print("Done.")
+            
+            # Extract the function code from the response
+            function_code = response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks if present
+            function_code = re.sub(r'```python\s*', '', function_code)
+            function_code = re.sub(r'```\s*$', '', function_code)
+            
+            return function_code
+            
+        except RateLimitError:
+            print(f"Rate limit exceeded. Retrying in {retry_delay} seconds... (Attempt {attempt+1}/{max_retries})")
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+            
+        except APIError as e:
+            print(f"API error: {e}. Retrying in {retry_delay} seconds... (Attempt {attempt+1}/{max_retries})")
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return None
+    
+    print(f"Failed to generate function after {max_retries} attempts.")
+    return None
 
 def main():
-    """Main function to generate parsing functions for each field."""
-    try:
-        api_key = load_api_key()
-    except ValueError as e:
-        print(e)
+    """Main entry point."""
+    # Load field mapping
+    field_mapping = load_json_file(FIELD_MAPPING_FILE, "field mapping")
+    if not field_mapping:
+        print("Error: Field mapping not found.")
         return
-
-    client = OpenAI(api_key=api_key)
-
-    # Load field mapping and full spec chunks
-    field_mappings = load_json_file(FIELD_MAPPING_FILE, "Field mapping")
-    all_chunks = load_json_file(SPEC_CHUNKS_FILE, "Spec chunks")
-
-    if not field_mappings or not all_chunks:
-        print("Missing necessary input files (field_mapping.json or spec_chunks.json). Exiting.")
+    
+    # Load spec chunks
+    spec_chunks = load_json_file(SPEC_CHUNKS_FILE, "specification chunks")
+    if not spec_chunks:
+        print("Error: Specification chunks not found.")
         return
-
-    # Create a lookup for chunk text by ID
-    chunk_text_lookup = {chunk['id']: chunk.get('text', '') for chunk in all_chunks}
-
-    print(f"Generating parsing functions for {len(field_mappings)} fields...")
-
-    if not os.path.exists(OUTPUT_DIR):
-        try:
-            os.makedirs(OUTPUT_DIR)
-            print(f"Created output directory: {OUTPUT_DIR}")
-        except OSError as e:
-            print(f"Error creating output directory '{OUTPUT_DIR}': {e}. Exiting.")
-            return
-
-    generated_count = 0
-    failed_count = 0
-
-    for field in field_mappings:
-        field_name = field.get('field', 'UnknownField')
+    
+    # Create output directory if it doesn't exist
+    if not OUTPUT_DIR.exists():
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Created output directory: {OUTPUT_DIR}")
+    
+    # Create a mapping from chunk IDs to chunk text
+    chunk_id_to_text = {}
+    for i, chunk in enumerate(spec_chunks):
+        chunk_id = f"chunk_{i}"
+        chunk_id_to_text[chunk_id] = chunk.get('text', '')
+    
+    # Count fields to process
+    fields_to_process = list(field_mapping.keys())
+    print(f"Generating parsing functions for {len(fields_to_process)} fields...\n")
+    
+    successful_generations = 0
+    failed_generations = 0
+    
+    # Process each field
+    for field_name in fields_to_process:
+        field_info = field_mapping[field_name]
+        chunk_ids = field_info.get('chunk_ids', [])
+        field_offset = field_info.get('offset')
+        
         print(f"\nProcessing Field: '{field_name}'")
-
-        retrieved_chunk_ids = [c.get('chunk_id') for c in field.get('retrieved_chunks', [])]
-        print(f"  -> Retrieved chunk IDs: {retrieved_chunk_ids}")
-
-        # Gather context from retrieved chunks
-        context_parts = []
-        for chunk_id in retrieved_chunk_ids:
-            if chunk_id in chunk_text_lookup:
-                context_parts.append(chunk_text_lookup[chunk_id])
-            else:
-                print(f"  -> Warning: Chunk ID '{chunk_id}' not found in spec_chunks.json.")
-
-        if not context_parts:
-            print("  -> No context found for this field. Skipping generation.")
-            failed_count += 1
-            continue
-
-        full_context = "\n\n---\n\n".join(context_parts)
-        limited_context = limit_context(full_context, MAX_CONTEXT_TOKENS)
-
-        # Generate function code
-        raw_code, func_name = generate_parsing_function(client, field, limited_context, CHAT_MODEL)
-        python_code = extract_python_code(raw_code)
-
-        # Save the generated code
-        output_filename = os.path.join(OUTPUT_DIR, f"{func_name}.py")
-        try:
-            with open(output_filename, 'w', encoding='utf-8') as f:
-                f.write(python_code)
-            print(f"  -> Saved function to {output_filename}")
-            if python_code.strip().startswith("#"):
-                failed_count += 1 # Count generation failures/skipped
-            else:
-                generated_count += 1
-        except IOError as e:
-            print(f"  -> Error writing file {output_filename}: {e}")
-            failed_count += 1
-
-    print(f"\nCode generation complete.")
-    print(f"  Successfully generated functions: {generated_count}")
-    print(f"  Failed or skipped generations: {failed_count}")
+        print(f"  -> Retrieved chunk IDs: {chunk_ids}")
+        
+        # Combine text from all chunks
+        spec_context = ""
+        for chunk_id in chunk_ids:
+            if chunk_id in chunk_id_to_text:
+                spec_context += chunk_id_to_text[chunk_id] + "\n\n"
+        
+        # Truncate context if too long
+        if len(spec_context) > MAX_CONTEXT_TOKENS * 4:  # Rough estimate of tokens
+            spec_context = spec_context[:MAX_CONTEXT_TOKENS * 4]
+            print(f"  -> Truncated context from ~{len(spec_context)} to ~{MAX_CONTEXT_TOKENS * 4} characters.")
+        
+        # Generate the parsing function
+        function_code = generate_parsing_function(field_name, field_offset, spec_context)
+        
+        if function_code:
+            # Create a valid filename
+            func_name = f"parse_{field_name.lower().replace(' ', '_').replace('&', '').replace(',', '').replace('(', '').replace(')', '').replace('-', '_')}"
+            output_filename = OUTPUT_DIR / f"{func_name}.py"
+            
+            # Save the function to a file
+            try:
+                with open(output_filename, 'w', encoding='utf-8') as f:
+                    f.write(function_code)
+                print(f"  -> Saved function to {output_filename}")
+                successful_generations += 1
+            except Exception as e:
+                print(f"  -> Error saving function: {e}")
+                failed_generations += 1
+        else:
+            print(f"  -> Failed to generate function for '{field_name}'")
+            failed_generations += 1
+    
+    print("\nGeneration complete.")
+    print(f"Successfully generated functions: {successful_generations}")
+    print(f"Failed or skipped generations: {failed_generations}")
 
 if __name__ == "__main__":
     main()

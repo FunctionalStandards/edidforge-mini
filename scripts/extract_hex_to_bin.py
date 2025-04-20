@@ -3,12 +3,12 @@ Extract hex data from the example file and save it as a binary file.
 """
 import re
 import sys
-import os
 import argparse
+from pathlib import Path
 
 # --- Configuration ---
-DEFAULT_INPUT_FILE = os.path.join('..', 'data', 'raw', 'example_hex.txt')
-DEFAULT_OUTPUT_FILE = os.path.join('..', 'data', 'raw', 'edid.bin')
+DEFAULT_INPUT_FILE = Path('..') / 'data' / 'raw' / 'example_hex.txt'
+DEFAULT_OUTPUT_FILE = Path('..') / 'data' / 'raw' / 'edid.bin'
 # ---------------------
 
 def extract_hex_to_binary(input_file, output_file):
@@ -19,48 +19,45 @@ def extract_hex_to_binary(input_file, output_file):
             lines = [f.readline() for _ in range(10)]
         
         # Skip the first two lines (header and empty line)
-        hex_lines = lines[2:10]
+        hex_lines = lines[2:]
         
-        # Extract hex values and join them
-        hex_string = ''
+        # Extract hex values using regex
+        hex_values = []
         for line in hex_lines:
-            # Extract only the hex values (remove any text)
-            hex_values = re.findall(r'[0-9A-Fa-f]{2}', line)
-            hex_string += ''.join(hex_values)
+            # Find all hex values (e.g., 00, FF, etc.)
+            matches = re.findall(r'([0-9A-Fa-f]{2})', line)
+            hex_values.extend(matches)
         
-        # Convert hex string to bytes
-        binary_data = bytes.fromhex(hex_string)
+        # Convert hex strings to bytes
+        binary_data = bytes([int(h, 16) for h in hex_values])
         
-        # Verify we have 128 bytes (standard EDID size)
-        if len(binary_data) != 128:
-            print(f"Warning: Expected 128 bytes, got {len(binary_data)} bytes")
+        # Create output directory if it doesn't exist
+        output_dir = Path(output_file).parent
+        if output_dir and not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Ensure output directory exists
-        output_dir = os.path.dirname(output_file)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            
         # Write binary data to output file
         with open(output_file, 'wb') as f:
             f.write(binary_data)
         
-        print(f"Successfully extracted {len(binary_data)} bytes to {output_file}")
+        print(f"Successfully extracted {len(binary_data)} bytes of EDID data to {output_file}")
         return True
-    
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error extracting hex data: {e}")
         return False
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Extract hex data to binary EDID file')
-    parser.add_argument('--input', '-i', default=DEFAULT_INPUT_FILE,
-                        help=f'Path to input hex file (default: {DEFAULT_INPUT_FILE})')
-    parser.add_argument('--output', '-o', default=DEFAULT_OUTPUT_FILE,
-                        help=f'Path to output binary file (default: {DEFAULT_OUTPUT_FILE})')
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description='Extract hex data from a text file and save as binary.')
+    parser.add_argument('--input', '-i', type=str, default=str(DEFAULT_INPUT_FILE),
+                        help=f'Input file containing hex data (default: {DEFAULT_INPUT_FILE})')
+    parser.add_argument('--output', '-o', type=str, default=str(DEFAULT_OUTPUT_FILE),
+                        help=f'Output binary file (default: {DEFAULT_OUTPUT_FILE})')
     args = parser.parse_args()
     
-    if extract_hex_to_binary(args.input, args.output):
-        print("Extraction completed successfully.")
-    else:
-        print("Extraction failed.")
+    success = extract_hex_to_binary(args.input, args.output)
+    if not success:
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

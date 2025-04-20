@@ -1,168 +1,171 @@
-import os
 import sys
 import json
 import importlib.util
 import argparse
+from pathlib import Path
 
 # --- Configuration ---
-FUNCTIONS_DIR = os.path.join('..', 'functions')
-FIELD_DEFINITIONS_FILE = os.path.join('..', 'data', 'processed', 'field_definitions.json')
-DEFAULT_EDID_FILE = os.path.join('..', 'data', 'raw', 'edid.bin')
-DEFAULT_OUTPUT_FILE = os.path.join('..', 'data', 'output', 'parsed_edid.json')
+FUNCTIONS_DIR = Path('..') / 'functions'
+FIELD_DEFINITIONS_FILE = Path('..') / 'data' / 'processed' / 'field_definitions.json'
+DEFAULT_EDID_FILE = Path('..') / 'data' / 'raw' / 'edid.bin'
+DEFAULT_OUTPUT_FILE = Path('..') / 'data' / 'output' / 'parsed_edid.json'
 EXPECTED_EDID_LENGTH = 128
 
 # --- Helper Functions ---
 def load_field_definitions():
     """Load field definitions from JSON file."""
     try:
-        with open(FIELD_DEFINITIONS_FILE, 'r') as f:
+        with FIELD_DEFINITIONS_FILE.open('r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as ex:
         print(f"Error loading field definitions: {ex}")
         return []
 
-def load_edid_file(file_path):
-    """Load binary EDID data from file."""
-    try:
-        with open(file_path, 'rb') as f:
-            data = f.read()
-            if len(data) != EXPECTED_EDID_LENGTH:
-                print(f"Warning: EDID data is {len(data)} bytes, expected {EXPECTED_EDID_LENGTH}")
-            return data
-    except Exception as ex:
-        print(f"Error loading EDID file: {ex}")
-        return None
-
-def load_parsing_function(function_name):
+def load_parsing_function(field_name):
     """Dynamically load a parsing function from the functions directory."""
     try:
-        # Convert function name to snake_case for filename
-        module_name = "parse_" + function_name.lower().replace(' ', '_').replace('&', '_').replace('(', '_').replace(')', '_').replace('-', '_')
-        module_path = os.path.join(FUNCTIONS_DIR, f"{module_name}.py")
+        # Convert field name to a valid module name
+        module_name = f"parse_{field_name.lower().replace(' ', '_').replace('&', '').replace(',', '').replace('(', '').replace(')', '').replace('-', '_')}"
         
-        # Check if file exists
-        if not os.path.exists(module_path):
-            print(f"Warning: Function file not found: {module_path}")
+        # Check if the module exists
+        module_path = FUNCTIONS_DIR / f"{module_name}.py"
+        
+        # Skip if the module doesn't exist
+        if not module_path.exists():
+            print(f"Warning: Module file not found: {module_path}")
             return None
-            
-        # Load module dynamically
+        
+        # Load the module dynamically
         spec = importlib.util.spec_from_file_location(module_name, module_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         
-        # Get the parse function - look for the specific function name (e.g., parse_header)
-        function_name_snake = module_name
-        if hasattr(module, function_name_snake):
-            return getattr(module, function_name_snake)
+        # Get the parsing function from the module
+        function_name = module_name  # The function has the same name as the module
+        if hasattr(module, function_name):
+            return getattr(module, function_name)
         else:
-            print(f"Warning: No {function_name_snake} function found in {module_path}")
+            print(f"Error: Function '{function_name}' not found in module '{module_name}'")
             return None
     except Exception as ex:
-        print(f"Error loading parsing function '{function_name}': {ex}")
+        print(f"Error loading parsing function for '{field_name}': {ex}")
         return None
 
-def convert_for_json(obj):
-    """Convert objects that are not JSON serializable to serializable types."""
-    if isinstance(obj, bytes):
-        return list(obj)  # Convert bytes to list of integers
-    elif hasattr(obj, 'to_json'):
-        return obj.to_json()
-    else:
-        return obj
-
 def parse_edid(edid_data, field_definitions):
-    """Parse EDID data using field definitions and parsing functions."""
+    """Parse EDID binary data using field definitions."""
+    if not edid_data or not field_definitions:
+        print("Error: Missing EDID data or field definitions.")
+        return None
+    
+    # Verify EDID data length
+    if len(edid_data) != 128:
+        print(f"Warning: EDID data length is {len(edid_data)} bytes, expected 128 bytes.")
+    
     results = {}
     
+    # Process each field
     for field in field_definitions:
-        field_name = field.get('field', 'Unknown Field')
-        field_offset = field.get('offset', '')
+        field_name = field.get('field') or field.get('name')  # Support both field structures
+        if not field_name:
+            print("Warning: Field missing 'field' or 'name' attribute, skipping.")
+            continue
+            
+        field_offset = field.get('offset')
+        if not field_offset:
+            print(f"Warning: Field '{field_name}' missing offset, skipping.")
+            continue
+        
         print(f"Parsing field: {field_name}")
         
-        # Extract byte slice based on offset
-        byte_slice = None
-        if field_offset:
-            try:
-                # Parse offset format like "0x08-0x17"
-                offset_parts = field_offset.split('-')
-                if len(offset_parts) == 2:
-                    start_offset = int(offset_parts[0], 16)
-                    end_offset = int(offset_parts[1], 16) + 1  # +1 to include end byte
-                    byte_slice = edid_data[start_offset:end_offset]
-                    print(f"  -> Extracted bytes {start_offset}-{end_offset-1} for field '{field_name}'")
-                else:
-                    # Handle single byte offset like "0x10"
-                    start_offset = int(field_offset, 16)
-                    byte_slice = edid_data[start_offset:start_offset+1]
-                    print(f"  -> Extracted byte {start_offset} for field '{field_name}'")
-            except Exception as ex:
-                print(f"  -> Error extracting byte slice for '{field_name}': {ex}")
-                results[field_name] = f"ERROR: Could not extract byte slice: {ex}"
-                continue
+        # Load the parsing function for this field
+        parsing_function = load_parsing_function(field_name)
         
-        if byte_slice is None:
-            print(f"  -> Skipping field '{field_name}' (no offset information)")
+        if not parsing_function:
+            print(f"Warning: No parsing function found for field '{field_name}', skipping.")
             continue
         
-        # Load the parsing function
-        parse_func = load_parsing_function(field_name)
-        if not parse_func:
-            print(f"  -> Skipping field '{field_name}' (no parser available)")
-            continue
-            
-        # Execute the parsing function
+        # Parse the offset string (e.g., "0x00-0x07")
         try:
-            result = parse_func(byte_slice)
-            # Convert result to JSON-serializable type if needed
-            result = convert_for_json(result)
-            results[field_name] = result
-            print(f"  -> Success: {result}")
-        except Exception as ex:
-            print(f"  -> Error parsing '{field_name}': {ex}")
-            results[field_name] = f"ERROR: {ex}"
-            
+            start_offset, end_offset = parse_offset_string(field_offset)
+        except ValueError as e:
+            print(f"Error parsing offset for field '{field_name}': {e}")
+            continue
+        
+        # Extract the relevant byte slice
+        if end_offset > len(edid_data):
+            print(f"Warning: Field '{field_name}' offset {field_offset} exceeds EDID data length.")
+            end_offset = len(edid_data)
+        
+        byte_slice = edid_data[start_offset:end_offset]
+        
+        # Parse the field
+        try:
+            field_value = parsing_function(byte_slice)
+            results[field_name] = field_value
+        except Exception as e:
+            print(f"Error parsing field '{field_name}': {e}")
+            results[field_name] = None
+    
     return results
 
+def parse_offset_string(offset_string):
+    """Parse offset string in format like '0x00-0x07' to start and end byte offsets."""
+    try:
+        if '-' in offset_string:
+            start, end = offset_string.split('-')
+            start_offset = int(start.strip(), 16) if '0x' in start else int(start.strip())
+            end_offset = int(end.strip(), 16) if '0x' in end else int(end.strip())
+            # End offset is inclusive in the specification, but we need exclusive for slicing
+            end_offset += 1
+        else:
+            # Single byte
+            start_offset = int(offset_string.strip(), 16) if '0x' in offset_string else int(offset_string.strip())
+            end_offset = start_offset + 1
+        
+        return start_offset, end_offset
+    except Exception as e:
+        raise ValueError(f"Invalid offset format '{offset_string}': {e}")
+
 def main():
-    """Main function to parse EDID data."""
-    parser = argparse.ArgumentParser(description='Parse EDID binary data')
-    parser.add_argument('--input', '-i', default=DEFAULT_EDID_FILE,
-                        help=f'Path to EDID binary file (default: {DEFAULT_EDID_FILE})')
-    parser.add_argument('--output', '-o', default=DEFAULT_OUTPUT_FILE,
-                        help=f'Path to output JSON file (default: {DEFAULT_OUTPUT_FILE})')
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description='Parse EDID binary data using field definitions.')
+    parser.add_argument('--input', '-i', type=str, default=str(DEFAULT_EDID_FILE),
+                        help=f'Input EDID binary file (default: {DEFAULT_EDID_FILE})')
+    parser.add_argument('--output', '-o', type=str, default=str(DEFAULT_OUTPUT_FILE),
+                        help=f'Output JSON file (default: {DEFAULT_OUTPUT_FILE})')
     args = parser.parse_args()
     
-    # Ensure output directory exists
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
     # Load field definitions
-    print("Loading field definitions...")
     field_definitions = load_field_definitions()
     if not field_definitions:
-        print("Error: No field definitions found. Exiting.")
+        print("Error: No field definitions found.")
         sys.exit(1)
-    print(f"Loaded {len(field_definitions)} field definitions")
     
-    # Load EDID data
-    print(f"Loading EDID data from {args.input}...")
-    edid_data = load_edid_file(args.input)
-    if not edid_data:
-        print("Error: Failed to load EDID data. Exiting.")
+    # Read EDID binary data
+    try:
+        with Path(args.input).open('rb') as f:
+            edid_data = f.read()
+    except Exception as ex:
+        print(f"Error reading EDID data: {ex}")
         sys.exit(1)
-    print(f"Loaded {len(edid_data)} bytes of EDID data")
     
     # Parse EDID data
-    print("Parsing EDID data...")
-    results = parse_edid(edid_data, field_definitions)
+    result = parse_edid(edid_data, field_definitions)
     
-    # Save results
-    print(f"Saving results to {args.output}")
-    with open(args.output, 'w') as f:
-        json.dump(results, f, indent=2, default=convert_for_json)
-    
-    print("Parsing complete!")
+    # Save results to JSON file
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = Path(args.output).parent
+        if output_dir and not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        
+        print(f"Saving results to {args.output}")
+        with Path(args.output).open('w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2)
+        print("Parsing complete!")
+    except Exception as ex:
+        print(f"Error saving results: {ex}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

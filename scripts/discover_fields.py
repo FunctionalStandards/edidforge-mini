@@ -5,11 +5,12 @@ import faiss
 from openai import OpenAI, RateLimitError, APIError
 from dotenv import load_dotenv
 import time
+from pathlib import Path
 
 # --- Configuration ---
-FAISS_INDEX_FILE = os.path.join('..', 'data', 'processed', 'faiss_index.bin')
-CHUNK_METADATA_FILE = os.path.join('..', 'data', 'processed', 'chunk_metadata.json')
-OUTPUT_FIELD_DEFINITIONS_FILE = os.path.join('..', 'data', 'processed', 'field_definitions.json')
+FAISS_INDEX_FILE = Path('..') / 'data' / 'processed' / 'faiss_index.bin'
+CHUNK_METADATA_FILE = Path('..') / 'data' / 'processed' / 'chunk_metadata.json'
+OUTPUT_FIELD_DEFINITIONS_FILE = Path('..') / 'data' / 'processed' / 'field_definitions.json'
 EMBEDDING_MODEL = 'text-embedding-3-small'
 CHAT_MODEL = 'gpt-4o-mini' # Using the specified chat model
 INITIAL_SEARCH_QUERIES = [ # Queries to find general structure info
@@ -30,22 +31,38 @@ def load_api_key():
         raise ValueError("OPENAI_API_KEY not found in .env file or environment variables.")
     return api_key
 
-def load_json_file(filepath, description):
+def load_json_file(file_path, description):
     """Loads data from a JSON file with error handling."""
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        print(f"Error: {description} file '{filepath}' not found.")
+        print(f"Error: {description} file '{file_path}' not found.")
         return None
     except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from '{filepath}'.")
+        print(f"Error: Could not decode JSON from '{file_path}'.")
         return None
+
+def save_json_file(data, file_path, description):
+    """Save JSON data to file."""
+    try:
+        # Create directory if it doesn't exist
+        output_dir = Path(file_path).parent
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Successfully saved {description} to {file_path}")
+        return True
+    except Exception as e:
+        print(f"Error saving {description}: {e}")
+        return False
 
 def load_faiss_index(filepath):
     """Loads a FAISS index from a file."""
     try:
-        return faiss.read_index(filepath)
+        return faiss.read_index(str(filepath))
     except Exception as e:
         print(f"Error loading FAISS index from '{filepath}': {e}")
         return None
@@ -85,7 +102,7 @@ def get_context_from_queries(client, index, metadata, queries, num_chunks_per_qu
     print(f"Searching for context using {len(queries)} initial queries...")
 
     # Load full chunks data for text lookup
-    full_chunks_data = load_json_file(os.path.join('..', 'data', 'processed', 'spec_chunks.json'), 'Full spec chunks')
+    full_chunks_data = load_json_file(Path('..') / 'data' / 'processed' / 'spec_chunks.json', 'Full spec chunks')
     if not full_chunks_data:
         print("Error: Cannot load full text from spec_chunks.json. Falling back to metadata previews.")
         # Create an empty lookup or handle fallback gracefully
@@ -257,9 +274,7 @@ def main():
     try:
         # Ensure we wrap the list in the expected object format for consistency if needed, but prompt asks LLM for it.
         # For now, save whatever list the LLM returned.
-        with open(OUTPUT_FIELD_DEFINITIONS_FILE, 'w', encoding='utf-8') as f:
-            # Save the list directly, as we extracted it
-            json.dump(generated_fields, f, indent=2, ensure_ascii=False)
+        save_json_file(generated_fields, OUTPUT_FIELD_DEFINITIONS_FILE, 'Field definitions')
         print(f"Successfully saved LLM-generated field definitions to {OUTPUT_FIELD_DEFINITIONS_FILE}")
     except IOError as e:
         print(f"Error writing field definitions file: {e}")

@@ -5,11 +5,12 @@ import faiss
 from openai import OpenAI
 from dotenv import load_dotenv
 import time
+from pathlib import Path
 
 # --- Configuration ---
-CHUNK_FILE = os.path.join('..', 'data', 'raw', 'spec_chunks.json')
-OUTPUT_INDEX_FILE = os.path.join('..', 'data', 'processed', 'faiss_index.bin')
-OUTPUT_METADATA_FILE = os.path.join('..', 'data', 'processed', 'chunk_metadata.json')
+CHUNK_FILE = Path('..') / 'data' / 'raw' / 'spec_chunks.json'
+OUTPUT_INDEX_FILE = Path('..') / 'data' / 'processed' / 'faiss_index.bin'
+OUTPUT_METADATA_FILE = Path('..') / 'data' / 'processed' / 'chunk_metadata.json'
 EMBEDDING_MODEL = 'text-embedding-3-small'
 # ---------------------
 
@@ -21,17 +22,30 @@ def load_api_key():
         raise ValueError("OPENAI_API_KEY not found in .env file or environment variables.")
     return api_key
 
-def load_chunks(filepath):
-    """Loads chunks from the JSON file."""
+def load_json_file(file_path, description):
+    """Load JSON data from file."""
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Chunk file '{filepath}' not found. Run extract_pdf.py first.")
+    except Exception as e:
+        print(f"Error loading {description}: {e}")
         return None
-    except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from '{filepath}'.")
-        return None
+
+def save_json_file(data, file_path, description):
+    """Save JSON data to file."""
+    try:
+        # Create directory if it doesn't exist
+        output_dir = Path(file_path).parent
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Successfully saved {description} to {file_path}")
+        return True
+    except Exception as e:
+        print(f"Error saving {description}: {e}")
+        return False
 
 def get_embeddings(client, texts, model=EMBEDDING_MODEL, batch_size=100):
     """Generates embeddings for a list of texts using OpenAI API with batching."""
@@ -62,7 +76,7 @@ def main():
 
     client = OpenAI(api_key=api_key)
 
-    chunks = load_chunks(CHUNK_FILE)
+    chunks = load_json_file(CHUNK_FILE, 'chunk file')
     if not chunks:
         return
 
@@ -104,20 +118,17 @@ def main():
 
     # Save FAISS index
     try:
-        faiss.write_index(index, OUTPUT_INDEX_FILE)
+        output_dir = OUTPUT_INDEX_FILE.parent
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        faiss.write_index(index, str(OUTPUT_INDEX_FILE))
         print(f"FAISS index saved to {OUTPUT_INDEX_FILE}")
     except IOError as e:
         print(f"Error saving FAISS index: {e}")
         return
 
     # Save metadata mapping (index position -> chunk metadata)
-    try:
-        with open(OUTPUT_METADATA_FILE, 'w', encoding='utf-8') as f:
-            # Store as a list, where the index in the list corresponds to the FAISS index ID
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        print(f"Chunk metadata saved to {OUTPUT_METADATA_FILE}")
-    except IOError as e:
-        print(f"Error saving metadata file: {e}")
+    save_json_file(metadata, OUTPUT_METADATA_FILE, 'chunk metadata')
 
 if __name__ == "__main__":
     main()

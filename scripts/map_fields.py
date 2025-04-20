@@ -4,12 +4,13 @@ import numpy as np
 import faiss
 from openai import OpenAI
 from dotenv import load_dotenv
+from pathlib import Path
 
 # --- Configuration ---
-FIELD_DEFINITIONS_FILE = os.path.join('..', 'data', 'processed', 'field_definitions.json')
-FAISS_INDEX_FILE = os.path.join('..', 'data', 'processed', 'faiss_index.bin')
-CHUNK_METADATA_FILE = os.path.join('..', 'data', 'processed', 'chunk_metadata.json')
-OUTPUT_MAPPING_FILE = os.path.join('..', 'data', 'processed', 'field_mapping.json')
+FIELD_DEFINITIONS_FILE = Path('..') / 'data' / 'processed' / 'field_definitions.json'
+FAISS_INDEX_FILE = Path('..') / 'data' / 'processed' / 'faiss_index.bin'
+CHUNK_METADATA_FILE = Path('..') / 'data' / 'processed' / 'chunk_metadata.json'
+OUTPUT_MAPPING_FILE = Path('..') / 'data' / 'processed' / 'field_mapping.json'
 EMBEDDING_MODEL = 'text-embedding-3-small'
 NUM_CHUNKS_TO_RETRIEVE = 3 # Number of chunks to retrieve per field
 # ---------------------
@@ -19,121 +20,113 @@ def load_api_key():
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY not found in .env file or environment variables.")
+        raise ValueError("OPENAI_API_KEY not found in environment variables")
     return api_key
 
-def load_json_file(filepath, description):
-    """Loads data from a JSON file with error handling."""
+def load_json_file(file_path, description):
+    """Load JSON data from file."""
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {description} file '{filepath}' not found.")
-        return None
-    except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from '{filepath}'.")
-        return None
-
-def load_faiss_index(filepath):
-    """Loads a FAISS index from a file."""
-    try:
-        return faiss.read_index(filepath)
     except Exception as e:
-        print(f"Error loading FAISS index from '{filepath}': {e}")
+        print(f"Error loading {description}: {e}")
         return None
 
-def get_single_embedding(client, text, model=EMBEDDING_MODEL):
-    """Generates an embedding for a single text string."""
+def save_json_file(data, file_path, description):
+    """Save JSON data to file."""
     try:
-        response = client.embeddings.create(input=[text], model=model)
+        # Create directory if it doesn't exist
+        output_dir = Path(file_path).parent
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        print(f"Successfully saved {description} to {file_path}")
+        return True
+    except Exception as e:
+        print(f"Error saving {description}: {e}")
+        return False
+
+def get_embedding(text, client):
+    """Get embedding for a text using OpenAI API."""
+    try:
+        response = client.embeddings.create(
+            input=text,
+            model=EMBEDDING_MODEL
+        )
         return response.data[0].embedding
     except Exception as e:
-        print(f"Error getting embedding for text '{text[:50]}...': {e}")
+        print(f"Error getting embedding: {e}")
         return None
 
-def main():
-    """Main function to map fields to relevant spec chunks."""
+def map_fields_to_chunks():
+    """Map fields to relevant chunks from the specification."""
+    # Load field definitions
+    field_definitions = load_json_file(FIELD_DEFINITIONS_FILE, "field definitions")
+    if not field_definitions:
+        return False
+    
+    # Load FAISS index
     try:
-        api_key = load_api_key()
-    except ValueError as e:
-        print(e)
-        return
-
-    client = OpenAI(api_key=api_key)
-
-    # Load necessary files
-    field_definitions = load_json_file(FIELD_DEFINITIONS_FILE, "Field definitions")
-    index = load_faiss_index(FAISS_INDEX_FILE)
-    chunk_metadata = load_json_file(CHUNK_METADATA_FILE, "Chunk metadata")
-
-    if not field_definitions or not index or not chunk_metadata:
-        print("Missing necessary input files. Exiting.")
-        return
-
-    print(f"Loaded {len(field_definitions)} field definitions.")
-    print(f"Loaded FAISS index with {index.ntotal} vectors.")
-    print(f"Loaded {len(chunk_metadata)} chunk metadata entries.")
-
-    final_mapping = []
-
-    for field_def in field_definitions:
-        query = field_def.get('query')
-        if not query:
-            print(f"Skipping field definition without a query: {field_def}")
-            continue
-
-        print(f"\nProcessing field: '{field_def.get('field', 'N/A')}' (Query: '{query}')")
-
-        # 1. Embed the query
-        query_embedding = get_single_embedding(client, query)
+        index = faiss.read_index(str(FAISS_INDEX_FILE))
+        print(f"Loaded FAISS index with {index.ntotal} vectors.")
+    except Exception as e:
+        print(f"Error loading FAISS index: {e}")
+        return False
+    
+    # Load chunk metadata
+    chunk_metadata = load_json_file(CHUNK_METADATA_FILE, "chunk metadata")
+    if not chunk_metadata:
+        return False
+    
+    # Initialize OpenAI client
+    client = OpenAI(api_key=load_api_key())
+    
+    # Create mapping from fields to chunks
+    field_mapping = {}
+    
+    for field in field_definitions:
+        # Support both 'field' and 'name' keys for backward compatibility
+        field_name = field.get('field') or field.get('name', 'Unknown Field')
+        query = field.get('query', f"What is the {field_name} field in EDID?")
+        
+        print(f"\nProcessing field: '{field_name}' (Query: '{query}')")
+        
+        # Get embedding for the query
+        query_embedding = get_embedding(query, client)
         if not query_embedding:
-            print(f"  -> Failed to embed query. Skipping field.")
+            print(f"  -> Skipping field '{field_name}' due to embedding error")
             continue
-
-        query_embedding_np = np.array([query_embedding]).astype('float32')
-
-        # 2. Search FAISS index
-        try:
-            distances, indices = index.search(query_embedding_np, NUM_CHUNKS_TO_RETRIEVE)
-            retrieved_indices = indices[0] # Get the indices for the first (only) query
-            retrieved_distances = distances[0]
-            print(f"  -> Found relevant chunk indices: {retrieved_indices.tolist()}")
-        except Exception as e:
-            print(f"  -> Error searching FAISS index: {e}. Skipping field.")
-            continue
-
-        # 3. Retrieve chunk metadata
-        retrieved_chunks_info = []
-        for i, idx in enumerate(retrieved_indices):
-            if 0 <= idx < len(chunk_metadata):
-                metadata = chunk_metadata[idx]
-                retrieved_chunks_info.append({
-                    "chunk_id": metadata.get('id'),
-                    "source_pdf": metadata.get('source_pdf'),
-                    "page": metadata.get('page'),
-                    "text_preview": metadata.get('text_preview'),
-                    "distance": float(retrieved_distances[i]) # Include similarity score
-                })
-            else:
-                print(f"  -> Warning: Retrieved index {idx} is out of bounds for metadata.")
-
-        # 4. Combine field definition with retrieved info
-        mapping_entry = {
-            "offset": field_def.get('offset'),
-            "field": field_def.get('field'),
+        
+        # Convert embedding to numpy array
+        query_vector = np.array([query_embedding], dtype=np.float32)
+        
+        # Search for similar chunks
+        distances, indices = index.search(query_vector, NUM_CHUNKS_TO_RETRIEVE)
+        
+        print(f"  -> Found relevant chunk indices: {indices[0].tolist()}")
+        
+        # Map field to chunks
+        chunk_ids = [f"chunk_{idx}" for idx in indices[0].tolist()]
+        field_mapping[field_name] = {
             "query": query,
-            "retrieved_chunks": retrieved_chunks_info
+            "chunk_ids": chunk_ids,
+            "offset": field.get('offset', None)
         }
-        final_mapping.append(mapping_entry)
-        print(f"  -> Added {len(retrieved_chunks_info)} retrieved chunk(s) to mapping.")
+        
+        print(f"  -> Added {len(chunk_ids)} retrieved chunk(s) to mapping.")
+    
+    # Save mapping to file
+    return save_json_file(field_mapping, OUTPUT_MAPPING_FILE, "field mapping with retrieved chunks")
 
-    # 5. Save the final mapping
-    try:
-        with open(OUTPUT_MAPPING_FILE, 'w', encoding='utf-8') as f:
-            json.dump(final_mapping, f, indent=2, ensure_ascii=False)
-        print(f"\nSuccessfully saved field mapping with retrieved chunks to {OUTPUT_MAPPING_FILE}")
-    except IOError as e:
-        print(f"Error writing final mapping file: {e}")
+def main():
+    """Main entry point."""
+    success = map_fields_to_chunks()
+    if not success:
+        print("Failed to map fields to chunks.")
+        return 1
+    return 0
 
 if __name__ == "__main__":
-    main()
+    exit(main())
