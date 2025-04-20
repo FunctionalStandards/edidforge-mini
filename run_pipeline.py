@@ -3,26 +3,26 @@
 Run the complete EDID parsing pipeline from start to finish.
 Optionally clean all generated artifacts before running.
 """
-import os
 import sys
 import shutil
 import argparse
 import subprocess
 import time
 import datetime
+from pathlib import Path
 
 # --- Configuration ---
-PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
-RAW_DATA_DIR = os.path.join(DATA_DIR, 'raw')
-PROCESSED_DATA_DIR = os.path.join(DATA_DIR, 'processed')
-OUTPUT_DATA_DIR = os.path.join(DATA_DIR, 'output')
-FUNCTIONS_DIR = os.path.join(PROJECT_ROOT, 'functions')
-SCRIPTS_DIR = os.path.join(PROJECT_ROOT, 'scripts')
-LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_ROOT / 'data'
+RAW_DATA_DIR = DATA_DIR / 'raw'
+PROCESSED_DATA_DIR = DATA_DIR / 'processed'
+OUTPUT_DATA_DIR = DATA_DIR / 'output'
+FUNCTIONS_DIR = PROJECT_ROOT / 'functions'
+SCRIPTS_DIR = PROJECT_ROOT / 'scripts'
+LOGS_DIR = PROJECT_ROOT / 'logs'
 
 # Python interpreter from virtual environment
-PYTHON_EXECUTABLE = os.path.join(PROJECT_ROOT, '.venv', 'Scripts', 'python.exe')
+PYTHON_EXECUTABLE = PROJECT_ROOT / '.venv' / 'Scripts' / 'python.exe'
 
 # --- Logging Setup ---
 class TeeLogger:
@@ -44,12 +44,12 @@ class TeeLogger:
 def setup_logging():
     """Set up logging to both console and file."""
     # Create logs directory if it doesn't exist
-    if not os.path.exists(LOGS_DIR):
-        os.makedirs(LOGS_DIR)
+    if not LOGS_DIR.exists():
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # Create timestamped log filename
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = os.path.join(LOGS_DIR, f"pipeline_run_{timestamp}.log")
+    log_filename = LOGS_DIR / f"pipeline_run_{timestamp}.log"
     
     # Open log file and redirect stdout/stderr
     log_file = open(log_filename, 'w', encoding='utf-8')
@@ -80,35 +80,33 @@ def ensure_directories():
     - logs/        : For pipeline run logs
     """
     for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUT_DATA_DIR, FUNCTIONS_DIR, LOGS_DIR]:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+        if not directory.exists():
+            directory.mkdir(parents=True, exist_ok=True)
             print(f"Created directory: {directory}")
 
 def clean_artifacts():
     """Remove all generated artifacts."""
     # Clean data directories
     for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUT_DATA_DIR]:
-        if os.path.exists(directory):
-            for file in os.listdir(directory):
-                file_path = os.path.join(directory, file)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                    print(f"Removed file: {file_path}")
+        if directory.exists():
+            for file in directory.iterdir():
+                if file.is_file():
+                    file.unlink()
+                    print(f"Removed file: {file}")
     
     # Clean functions directory
-    if os.path.exists(FUNCTIONS_DIR):
-        for file in os.listdir(FUNCTIONS_DIR):
-            if file.endswith('.py'):
-                file_path = os.path.join(FUNCTIONS_DIR, file)
-                os.remove(file_path)
-                print(f"Removed function: {file_path}")
+    if FUNCTIONS_DIR.exists():
+        for file in FUNCTIONS_DIR.iterdir():
+            if file.name.endswith('.py'):
+                file.unlink()
+                print(f"Removed function: {file}")
     
     print("All generated artifacts have been cleaned.")
 
 def run_command(args, description, cwd=None):
     """Run a command with proper error handling."""
     print(f"\n{'='*80}\n{description}\n{'='*80}")
-    print(f"Running: {' '.join(args)}")
+    print(f"Running: {' '.join(str(arg) for arg in args)}")
     
     start_time = time.time()
     
@@ -131,19 +129,19 @@ def run_command(args, description, cwd=None):
 def run_pipeline():
     """Run the complete pipeline from start to finish."""
     # Copy example hex file to raw data directory if needed
-    example_file = os.path.join(PROJECT_ROOT, 'example', '0839EBB5CAB9')
-    example_hex_dest = os.path.join(RAW_DATA_DIR, 'example_hex.txt')
-    if not os.path.exists(example_hex_dest) and os.path.exists(example_file):
+    example_file = PROJECT_ROOT / 'example' / '0839EBB5CAB9'
+    example_hex_dest = RAW_DATA_DIR / 'example_hex.txt'
+    if not example_hex_dest.exists() and example_file.exists():
         shutil.copy2(example_file, example_hex_dest)
         print(f"Copied example hex file to: {example_hex_dest}")
     
     # Log the input hex data if available
-    if os.path.exists(example_file):
+    if example_file.exists():
         print("\n" + "="*80)
         print("INPUT HEX DATA")
         print("="*80)
         try:
-            with open(example_file, 'r') as f:
+            with example_file.open('r', encoding='utf-8') as f:
                 hex_data = f.read()
                 print(hex_data)
         except Exception as e:
@@ -155,9 +153,9 @@ def run_pipeline():
         return False
     
     # Copy spec_chunks.json from raw to processed directory for discover_fields.py
-    raw_chunks = os.path.join(RAW_DATA_DIR, 'spec_chunks.json')
-    processed_chunks = os.path.join(PROCESSED_DATA_DIR, 'spec_chunks.json')
-    if os.path.exists(raw_chunks):
+    raw_chunks = RAW_DATA_DIR / 'spec_chunks.json'
+    processed_chunks = PROCESSED_DATA_DIR / 'spec_chunks.json'
+    if raw_chunks.exists():
         shutil.copy2(raw_chunks, processed_chunks)
         print(f"Copied spec_chunks.json from {raw_chunks} to {processed_chunks}")
     
@@ -195,16 +193,16 @@ def run_pipeline():
     print("Pipeline completed successfully!")
     print("="*80)
     
-    output_json_path = os.path.join(OUTPUT_DATA_DIR, 'parsed_edid.json')
+    output_json_path = OUTPUT_DATA_DIR / 'parsed_edid.json'
     print(f"\nParsed EDID data saved to: {output_json_path}")
     
     # Log the output JSON if available
-    if os.path.exists(output_json_path):
+    if output_json_path.exists():
         print("\n" + "="*80)
         print("OUTPUT JSON")
         print("="*80)
         try:
-            with open(output_json_path, 'r') as f:
+            with output_json_path.open('r', encoding='utf-8') as f:
                 json_data = f.read()
                 print(json_data)
         except Exception as e:
