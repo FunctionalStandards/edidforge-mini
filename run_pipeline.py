@@ -189,6 +189,16 @@ def run_pipeline():
                       "Step 7: Parsing EDID binary data", SCRIPTS_DIR):
         return False
     
+    # Step 8: Analyze binary structure of fields
+    if not run_command([PYTHON_EXECUTABLE, 'binary_structure_analysis.py'], 
+                      "Step 8: Analyzing binary structure of fields", SCRIPTS_DIR):
+        return False
+    
+    # Step 9: Generate HexPat template
+    if not run_command([PYTHON_EXECUTABLE, 'generate_hexpat.py'], 
+                      "Step 9: Generating HexPat template", SCRIPTS_DIR):
+        return False
+    
     print("\n" + "="*80)
     print("Pipeline completed successfully!")
     print("="*80)
@@ -207,6 +217,23 @@ def run_pipeline():
                 print(json_data)
         except Exception as e:
             print(f"Error reading output JSON: {e}")
+    
+    # Log the HexPat template if available
+    output_hexpat_path = OUTPUT_DATA_DIR / 'edid.hexpat'
+    if output_hexpat_path.exists():
+        print("\n" + "="*80)
+        print("HEXPAT TEMPLATE")
+        print("="*80)
+        try:
+            with output_hexpat_path.open('r', encoding='utf-8') as f:
+                hexpat_data = f.read()
+                # Print first 20 lines of the template
+                hexpat_lines = hexpat_data.split('\n')
+                print('\n'.join(hexpat_lines[:20]))
+                if len(hexpat_lines) > 20:
+                    print(f"\n... (and {len(hexpat_lines) - 20} more lines)")
+        except Exception as e:
+            print(f"Error reading HexPat template: {e}")
     
     return True
 
