@@ -38,6 +38,19 @@ flowchart TD
     FieldMappings --> CodeGen{LLM Code Generator<br/><i>OpenAI gpt-4o-mini</i>}
     CodeGen --> Parsers[/Field Parsing Functions<br/><i>Python</i>/]
     
+    %% Binary Structure Analysis
+    FieldDefs --> BinaryStructureAnalysis{{Binary Structure Analysis}}
+    BinaryStructureAnalysis --> EnhancedFieldDefs[(Enhanced Field Definitions<br/><i>JSON</i>)]
+    
+    %% BFIR Generation
+    EnhancedFieldDefs --> BFIRGenerator{{BFIR Generator}}
+    BFIRGenerator --> BFIR[(BFIR Data<br/><i>JSON</i>)]
+    
+    %% HexPat Generation
+    BFIR --> HexPatGenerator{{HexPat Generator}}
+    BFIRGenerator --> HexPatGenerator
+    HexPatGenerator --> HexPat[/HexPat Templates<br/><i>hexpat</i>/]
+    
     %% Parser Assembly
     Parsers --> Assembler{{Parser Assembler<br/><i>Python importlib</i>}}
     Assembler --> CLI([CLI Parser<br/><i>Python argparse</i>])
@@ -55,11 +68,11 @@ flowchart TD
     classDef modifiable fill:#B39DDB,stroke:#4527A0,stroke-width:2px,color:#000;
     classDef generated fill:#EF9A9A,stroke:#B71C1C,stroke-width:2px,color:#000;
     
-    class PDF,BinaryFile,Chunks,VectorDB,FieldDefs,FieldMappings input;
+    class PDF,BinaryFile,Chunks,VectorDB,FieldDefs,FieldMappings,BFIR,HexPat input;
     class ParsedData output;
-    class FieldDiscovery,CodeGen llm;
+    class FieldDiscovery,CodeGen,HexPatGenerator llm;
     class Parsers generated;
-    class Extractor,Embedder,Mapper,Assembler,CLI modifiable;
+    class Extractor,Embedder,Mapper,BinaryStructureAnalysis,BFIRGenerator,Assembler,CLI modifiable;
 ```
 
 ### Node Shapes Legend
@@ -81,6 +94,8 @@ These components can be modified by developers to improve the pipeline:
   - **Text Extractor**: The PDF extraction script (`extract_pdf.py`)
   - **Embedding Generator**: The embedding generation script (`embed_store.py`)
   - **Field-to-Spec Mapper**: The field mapping script (`map_fields.py`)
+  - **Binary Structure Analysis**: The binary structure analysis script (`binary_structure_analysis.py`)
+  - **BFIR Generator**: The BFIR generation script (`bfir_pipeline.py`)
   - **Parser Assembler**: The parser assembly script (`parse_edid.py`)
   - **CLI Parser**: The run pipeline script (`run_pipeline.py`)
 
@@ -98,6 +113,9 @@ These data artifacts are generated during pipeline execution:
   - **Vector Database**: FAISS index of embedded chunks
   - **Field Definitions**: AI-discovered fields from the specification
   - **Field Mappings**: Mappings between fields and specification chunks
+  - **Enhanced Field Definitions**: Field definitions with binary structure information
+  - **BFIR Data**: Binary Format Intermediate Representation data
+  - **HexPat Templates**: HexPat pattern language templates
 
 The pipeline is designed to regenerate all intermediate data and generated components from scratch when run with the `--clean` flag.
 
@@ -115,18 +133,30 @@ The pipeline consists of the following key components:
 
 5. **Code Generation**: OpenAI's `gpt-4o-mini` generates parsing code for each field based on specification context
 
-6. **Parser Assembly**: Individual parsing functions dynamically imported and assembled into a CLI tool using Python's `importlib` and `argparse`
+6. **Binary Structure Analysis**: Detailed binary structure information is extracted for each field
+
+7. **BFIR Generation**: Binary Format Intermediate Representation (BFIR) is generated from enhanced field definitions
+
+8. **HexPat Generation**: ImHex pattern language templates are generated using both direct and BFIR-based methods
+
+9. **Parser Assembly**: Individual parsing functions dynamically imported and assembled into a CLI tool using Python's `importlib` and `argparse`
 
 ## 📋 Project Structure
 
 ```
 edidforge-mini/
+├── bfir/                 # Binary Format Intermediate Representation
+│   ├── converters/       # Converters for different output formats
+│   │   └── hexpat/       # HexPat converter
+│   └── README_INTEGRATION.md # BFIR integration documentation
 ├── data/
 │   ├── raw/              # Raw data (spec chunks, binary files)
-│   ├── processed/        # Processed data (embeddings, field mappings)
-│   └── output/           # Output data (parsed EDID)
+│   ├── processed/        # Processed data (embeddings, field mappings, BFIR)
+│   └── output/           # Output data (parsed EDID, HexPat templates)
 ├── example/              # Example EDID binary files
 ├── functions/            # Generated parsing functions
+├── hexpat/               # HexPat pattern files
+│   └── patterns/         # HexPat pattern templates
 ├── scripts/              # Pipeline scripts
 │   ├── extract_pdf.py    # PDF extraction
 │   ├── extract_hex_to_bin.py # Convert hex to binary
@@ -134,7 +164,11 @@ edidforge-mini/
 │   ├── discover_fields.py # Discover fields from specification
 │   ├── map_fields.py     # Map fields to specification chunks
 │   ├── generate_code.py  # Generate parsing code
-│   └── parse_edid.py     # Parse EDID binary data
+│   ├── parse_edid.py     # Parse EDID binary data
+│   ├── binary_structure_analysis.py # Analyze binary structure
+│   ├── bfir_pipeline.py  # BFIR pipeline integration
+│   ├── generate_hexpat.py # Generate HexPat (original method)
+│   └── generate_bfir_hexpat.py # Generate HexPat from BFIR
 ├── spec/                 # EDID specification PDFs
 ├── run_pipeline.py       # Main pipeline orchestration script
 └── README.md             # This file
@@ -193,8 +227,11 @@ After running the pipeline, you'll find:
 - Extracted specification chunks in `data/raw/spec_chunks.json`
 - Generated field definitions in `data/processed/field_definitions.json`
 - Field mappings with context in `data/processed/field_mapping.json`
+- Enhanced field definitions with binary structure in `data/processed/enhanced_field_definitions.json`
+- BFIR data in `data/processed/bfir_output.json`
 - Generated parsing functions in the `functions/` directory
 - Parsed EDID data in `data/output/parsed_edid.json`
+- HexPat templates in `data/output/edid.hexpat` (original method) and `data/output/bfir_generated.hexpat` (BFIR method)
 
 ## 🔒 Constraints
 

@@ -2,6 +2,8 @@
 
 This document provides a comprehensive guide to the ImHex pattern language (HexPat) syntax and best practices, based on our experience developing the BFIR to HexPat converter and creating patterns for binary formats like EDID.
 
+> **Note**: This guide is based on our experience and may not cover all aspects of the ImHex pattern language. For the most up-to-date and comprehensive documentation, please refer to the [official ImHex pattern language documentation](https://docs.werwolv.net/pattern-language).
+
 ## Basic Syntax
 
 ### File Structure
@@ -257,38 +259,171 @@ struct User {
 };
 ```
 
+## Control Structures
+
+### If Statements
+
+ImHex supports standard if-else statements:
+
+```hexpat
+if (condition) {
+    // Code executed if condition is true
+} else if (another_condition) {
+    // Code executed if another_condition is true
+} else {
+    // Code executed if no conditions are true
+}
+```
+
+### For Loops
+
+For loops in ImHex use commas instead of semicolons as separators:
+
+```hexpat
+// Correct for loop syntax
+for (u8 i = 0, i < 10, i = i + 1) {
+    // Loop body
+}
+```
+
+Note these important differences from C/C++:
+
+- Use commas (,) instead of semicolons (;) as separators
+- Don't use shorthand increment operators like `i++` or `i += 1`
+- Use explicit assignment: `i = i + 1` instead
+
+### While Loops
+
+While loops follow standard syntax:
+
+```hexpat
+u8 i = 0;
+while (i < 10) {
+    // Loop body
+    i = i + 1;
+}
+```
+
+## Library Functions
+
+### Importing Libraries
+
+ImHex uses dot notation for importing libraries:
+
+```hexpat
+import std.math;  // Import math library
+import std.core;  // Import core library
+```
+
+### Using Library Functions
+
+Despite using dot notation for imports, ImHex uses double colon notation for function calls:
+
+```hexpat
+// Import library
+import std.math;
+
+// Use library function (note the double colons)
+float result = std::math::pow(2, 10);
+```
+
+This inconsistency between import syntax (dots) and function call syntax (double colons) is important to remember.
+
+### Common Libraries
+
+- `std.math`: Mathematical functions (pow, sqrt, etc.)
+- `std.core`: Core utilities
+- `std.mem`: Memory operations
+- `std.string`: String manipulation
+
+## Custom Functions
+
+### Function Declaration and Placement
+
+ImHex supports custom functions using the `fn` keyword. **Important**:
+
+1. Function declarations must end with a semicolon after the closing brace
+2. Functions should be defined after struct placement, not inside structs
+
+```hexpat
+// Define struct
+struct Example {
+    u32 value;
+};
+
+// Place struct at beginning of file
+Example example @ 0x00;
+
+// Define functions after struct placement
+fn calculateValue(u32 input) {
+    return input * 2;
+}; // Note the semicolon here after the closing brace
+```
+
+### Function Parameters and Return Values
+
+Functions can have multiple parameters and return values:
+
+```hexpat
+fn processData(u8 a, u16 b) {
+    // Function body
+    return a + b;
+};
+```
+
+### Working with Struct Data
+
+To access struct data from a function, use the variable name directly:
+
+```hexpat
+// Define and place struct
+struct Example {
+    u32 value;
+};
+Example example @ 0x00;
+
+// Function that accesses struct data
+fn processStruct() {
+    return example.value * 2; // Direct access to struct instance
+};
+```
+
+### Calling Custom Functions
+
+Custom functions are called directly by name:
+
+```hexpat
+u32 result = calculateValue(10); // Calls the custom function
+
+// To process struct data
+processStruct(); // No need to pass the struct as a parameter
+```
+
 ## Best Practices
 
 1. **Define Types Before Use**
-   - Use forward declarations with `using TypeName;`
-   - Define types in dependency order
-   - Consider implementing topological sorting for complex type hierarchies
+   - Always define structs, enums, and bitfields before using them
+   - Use forward declarations when necessary
 
-2. **Bitfield Handling**
-   - Always use the `bitfield` keyword for bit-level fields
-   - Define bitfields as separate types
-   - Use meaningful names for bitfield values
+2. **Use Descriptive Names**
+   - Choose clear, descriptive names for types and fields
+   - Follow a consistent naming convention
 
-3. **Comments and Documentation**
-   - Use C-style comments (`// comment`)
-   - Document the purpose of each field
-   - Include units and valid ranges where applicable
-   - Add byte offset information for important fields
+3. **Add Comments**
+   - Document the purpose of each field and struct
+   - Include offset information for clarity
 
-4. **Naming Conventions**
-   - Use CamelCase for type names
-   - Use camelCase or snake_case for field names
-   - Be consistent throughout the pattern
+4. **Organize Related Fields**
+   - Group related fields into separate structs
+   - Use nested structs sparingly and only when appropriate
 
-5. **Structure Organization**
-   - Group related fields together
-   - Use comments to separate logical sections
-   - Consider byte alignment in your structure design
+5. **Validate Your Patterns**
+   - Test patterns with real data
+   - Verify that all fields are correctly decoded
 
-6. **Reusability**
-   - Define common structures as separate types
-   - Use enums for constants and type codes
-   - Consider creating a library of common patterns
+6. **Consult Official Documentation**
+   - When in doubt, refer to the [official ImHex pattern language documentation](https://docs.werwolv.net/pattern-language)
+   - Check examples in the [ImHex-Patterns repository](https://github.com/WerWolv/ImHex-Patterns) for guidance
 
 ## Advanced Features
 

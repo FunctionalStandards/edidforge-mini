@@ -194,9 +194,19 @@ def run_pipeline():
                       "Step 8: Analyzing binary structure of fields", SCRIPTS_DIR):
         return False
     
-    # Step 9: Generate HexPat template
+    # Step 9: Generate BFIR from enhanced field definitions
+    if not run_command([PYTHON_EXECUTABLE, 'bfir_pipeline.py', '--skip-analysis', '--skip-hexpat'], 
+                      "Step 9: Converting to BFIR format", SCRIPTS_DIR):
+        return False
+    
+    # Step 10: Generate HexPat template (original method)
     if not run_command([PYTHON_EXECUTABLE, 'generate_hexpat.py'], 
-                      "Step 9: Generating HexPat template", SCRIPTS_DIR):
+                      "Step 10: Generating HexPat template (original method)", SCRIPTS_DIR):
+        return False
+    
+    # Step 11: Generate HexPat template from BFIR
+    if not run_command([PYTHON_EXECUTABLE, 'generate_bfir_hexpat.py'], 
+                      "Step 11: Generating HexPat template from BFIR", SCRIPTS_DIR):
         return False
     
     print("\n" + "="*80)
@@ -222,7 +232,7 @@ def run_pipeline():
     output_hexpat_path = OUTPUT_DATA_DIR / 'edid.hexpat'
     if output_hexpat_path.exists():
         print("\n" + "="*80)
-        print("HEXPAT TEMPLATE")
+        print("HEXPAT TEMPLATE (ORIGINAL METHOD)")
         print("="*80)
         try:
             with output_hexpat_path.open('r', encoding='utf-8') as f:
@@ -234,6 +244,23 @@ def run_pipeline():
                     print(f"\n... (and {len(hexpat_lines) - 20} more lines)")
         except Exception as e:
             print(f"Error reading HexPat template: {e}")
+    
+    # Log the BFIR-generated HexPat template if available
+    bfir_hexpat_path = OUTPUT_DATA_DIR / 'bfir_generated.hexpat'
+    if bfir_hexpat_path.exists():
+        print("\n" + "="*80)
+        print("HEXPAT TEMPLATE (BFIR METHOD)")
+        print("="*80)
+        try:
+            with bfir_hexpat_path.open('r', encoding='utf-8') as f:
+                bfir_hexpat_data = f.read()
+                # Print first 20 lines of the template
+                bfir_hexpat_lines = bfir_hexpat_data.split('\n')
+                print('\n'.join(bfir_hexpat_lines[:20]))
+                if len(bfir_hexpat_lines) > 20:
+                    print(f"\n... (and {len(bfir_hexpat_lines) - 20} more lines)")
+        except Exception as e:
+            print(f"Error reading BFIR-generated HexPat template: {e}")
     
     return True
 

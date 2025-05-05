@@ -16,7 +16,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Set
 
 
 class BFIRToHexPatConverter:
@@ -36,6 +36,8 @@ class BFIRToHexPatConverter:
         self.options = options or {}
         # Track processed fields to avoid duplicates
         self.processed_fields = set()
+        # Track required library imports
+        self.required_libraries: Set[str] = set()
 
     def convert(self) -> str:
         """
@@ -51,6 +53,9 @@ class BFIRToHexPatConverter:
 
         # Add pragma statements
         lines.extend(self._generate_pragmas())
+
+        # Add library imports if needed
+        lines.extend(self._generate_library_imports())
 
         # Generate forward declarations for all struct types
         lines.extend(self._generate_forward_declarations())
@@ -93,6 +98,19 @@ class BFIRToHexPatConverter:
         endianness = format_info.get("endianness", "little")
 
         lines = [f"#pragma endian {endianness}", ""]
+        return lines
+
+    def _generate_library_imports(self) -> List[str]:
+        """Generate library import statements for required libraries."""
+        lines = []
+        
+        # Add imports for any libraries identified during processing
+        for library in sorted(self.required_libraries):
+            lines.append(f"import {library};")
+        
+        if lines:
+            lines.append("")
+        
         return lines
 
     def _generate_forward_declarations(self) -> List[str]:
@@ -420,6 +438,92 @@ class BFIRToHexPatConverter:
             field_def += f" {field_offset}"
         
         return [field_def]
+
+    def _generate_for_loop(self, init_var: str, init_value: int, 
+                          condition: str, increment: str, 
+                          body_lines: List[str]) -> List[str]:
+        """
+        Generate a for loop with the correct ImHex syntax.
+        
+        Args:
+            init_var: The loop variable name
+            init_value: The initial value for the loop variable
+            condition: The loop condition
+            increment: The increment expression
+            body_lines: The lines of code in the loop body
+            
+        Returns:
+            List of strings containing the formatted for loop
+        """
+        # ImHex uses commas instead of semicolons in for loops
+        loop_header = f"for ({init_var} = {init_value}, {condition}, {increment}) {{"
+        
+        # Indent the body lines
+        indented_body = ["    " + line for line in body_lines]
+        
+        # Close the loop
+        loop_footer = "}"
+        
+        return [loop_header] + indented_body + [loop_footer]
+    
+    def _generate_function_call(self, namespace: str, function: str, 
+                               args: List[str]) -> str:
+        """
+        Generate a function call with the correct ImHex namespace syntax.
+        
+        Args:
+            namespace: The library namespace (e.g., 'std.math')
+            function: The function name
+            args: The function arguments
+            
+        Returns:
+            String containing the formatted function call
+        """
+        # Convert dot notation in namespace to double colon notation for function calls
+        namespace_parts = namespace.split('.')
+        namespace_call = "::".join(namespace_parts)
+        
+        # Add the library to required imports if not already present
+        self.required_libraries.add(namespace)
+        
+        # Format the function call
+        args_str = ", ".join(args)
+        return f"{namespace_call}::{function}({args_str})"
+
+    def _generate_function_declaration(self, function_name: str, params: List[Dict[str, str]], 
+                                      body_lines: List[str], return_type: str = None) -> List[str]:
+        """
+        Generate a function declaration with the correct ImHex syntax.
+        
+        Args:
+            function_name: The name of the function
+            params: List of parameter dictionaries with 'name' and 'type' keys
+            body_lines: The lines of code in the function body
+            return_type: Optional return type (ImHex infers return type if not specified)
+            
+        Returns:
+            List of strings containing the formatted function declaration
+        """
+        # Format parameters
+        param_strs = []
+        for param in params:
+            param_strs.append(f"{param['type']} {param['name']}")
+        
+        params_str = ", ".join(param_strs)
+        
+        # Start function declaration
+        if return_type:
+            header = f"fn {function_name}({params_str}) -> {return_type} {{"
+        else:
+            header = f"fn {function_name}({params_str}) {{"
+        
+        # Indent the body lines
+        indented_body = ["    " + line for line in body_lines]
+        
+        # Close the function with semicolon (important in ImHex pattern language)
+        footer = "};"
+        
+        return [header] + indented_body + [footer, ""]
 
     def _generate_main_struct(self) -> List[str]:
         """Generate the main struct definition."""
