@@ -1,0 +1,98 @@
+{
+    "format": {
+        "name": "EDID",
+        "version": "1.3",
+        "endianness": "little",
+        "description": "Extended Display Identification Data"
+    },
+    "fields": [
+        {
+            "id": "header",
+            "name": "Header",
+            "description": "Fixed 8-byte pattern (00 FF FF FF FF FF FF 00)",
+            "offset": "0x00-0x07",
+            "size": 8,
+            "type": "fixed_pattern",
+            "value_type": "binary"
+        },
+        {
+            "id": "vendor_product",
+            "name": "Vendor & Product Identification",
+            "description": "Information about the manufacturer and product",
+            "offset": "0x08-0x11",
+            "type": "struct"
+        },
+        {
+            "id": "manufacturer_id",
+            "name": "ID Manufacturer Name",
+            "description": "3-character manufacturer ID encoded in 2 bytes",
+            "parent": "vendor_product",
+            "offset": "0x08-0x09",
+            "size": 2,
+            "type": "bit_fields",
+            "value_type": "uint16",
+            "bit_fields": [
+                {
+                    "name": "char1",
+                    "description": "First character (5 bits, A-Z)",
+                    "bits": 5
+                },
+                {
+                    "name": "char2",
+                    "description": "Second character (5 bits, A-Z)",
+                    "bits": 5
+                },
+                {
+                    "name": "char3",
+                    "description": "Third character (5 bits, A-Z)",
+                    "bits": 5
+                },
+                {
+                    "name": "reserved",
+                    "description": "Reserved bit",
+                    "bits": 1
+                }
+            ]
+        },
+        {
+            "id": "product_code",
+            "name": "ID Product Code",
+            "description": "Manufacturer assigned product code",
+            "parent": "vendor_product",
+            "offset": "0x0A-0x0B",
+            "size": 2,
+            "type": "simple_value",
+            "value_type": "uint16"
+        },
+        {
+            "id": "serial_number",
+            "name": "ID Serial Number",
+            "description": "32-bit serial number",
+            "parent": "vendor_product",
+            "offset": "0x0C-0x0F",
+            "size": 4,
+            "type": "simple_value",
+            "value_type": "uint32"
+        },
+        {
+            "id": "week_of_manufacture",
+            "name": "Week of Manufacture",
+            "description": "Week number when the display was manufactured",
+            "parent": "vendor_product",
+            "offset": "0x10",
+            "size": 1,
+            "type": "simple_value",
+            "value_type": "uint8"
+        },
+        {
+            "id": "year_of_manufacture",
+            "name": "Year of Manufacture",
+            "description": "Year of manufacture minus 1990",
+            "parent": "vendor_product",
+            "offset": "0x11",
+            "size": 1,
+            "type": "simple_value",
+            "value_type": "uint8"
+        }
+    ]
+}
